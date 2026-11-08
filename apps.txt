@@ -1,0 +1,2 @@
+# Put your application numbers below, one per line (the number shown on the e-Register).
+# Lines starting with # are ignored. The tool stops with a clear message while this list is empty.

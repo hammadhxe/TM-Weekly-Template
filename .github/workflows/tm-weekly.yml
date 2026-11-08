@@ -1,0 +1,65 @@
+name: TM weekly
+
+on:
+  schedule:
+    - cron: '30 4 * * 1'   # every Monday 10:00 India time (written in UTC: India is UTC+5:30). Change the numbers to change the time.
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'login-test = only log in and message me. full = check all applications. full-and-email = check all AND email the manager. email-test = send a sample of the manager email to me only (no login). telegram-test = find my Telegram chat, remember it, send one message (no login).'
+        type: choice
+        default: login-test
+        options: [login-test, full, full-and-email, email-test, telegram-test, documents-test, drive-test]
+      only:
+        description: 'Optional: check only this application number (leave empty for all).'
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tm-weekly
+
+jobs:
+  run:
+    # The weekly timer does not run in this public template itself (it has no secrets); every copy of it runs normally.
+    if: ${{ github.repository != 'hammadhxe/tm-weekly-template' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      TM_MODE: ${{ github.event.inputs.mode || 'full' }}
+      ONLY_APPS: ${{ github.event.inputs.only || '' }}
+      # The manager is emailed only on the Monday schedule, or when full-and-email is chosen by hand (a plain "full" never emails him).
+      TM_EMAIL_MANAGER: ${{ (github.event_name == 'schedule' || github.event.inputs.mode == 'full-and-email') && '1' || '' }}
+      SIGN_NAME: ${{ secrets.SIGN_NAME }}
+      LOGIN_EMAIL: ${{ secrets.LOGIN_EMAIL }}
+      TZ: Asia/Kolkata
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium && sudo apt-get install -y xvfb && (sudo apt-get install -y fonts-deva || true) && (sudo apt-get install -y ghostscript || true)
+      - name: Run the check
+        run: xvfb-run -a node tm_weekly.js
+        env:
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SHEET_URL: ${{ secrets.SHEET_URL }}
+          SHEET_SECRET: ${{ secrets.SHEET_SECRET }}
+          SHEET_LINK: ${{ secrets.SHEET_LINK }}
+      - name: Save what was read (so next week can compare)
+        if: always() && (env.TM_MODE == 'full' || env.TM_MODE == 'full-and-email' || env.TM_MODE == 'telegram-test')
+        run: |
+          git config user.name "tm-weekly"
+          git config user.email "tm-weekly@users.noreply.github.com"
+          git add tm_weekly
+          git diff --cached --quiet || (git commit -m "TM weekly: save this run" && git push)
+      - name: Alert if the job itself broke
+        if: failure()
+        run: |
+          node tm_weekly.js --alert "TM weekly - the cloud job broke before it could finish. Open the Actions tab in the tm-weekly repo."
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
